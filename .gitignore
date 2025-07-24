@@ -1,0 +1,11 @@
+# Executables
+benchmark
+multiServ
+
+# Object files
+*.o
+
+# temporary files
+*.tmp
+*.bak
+*.swp
