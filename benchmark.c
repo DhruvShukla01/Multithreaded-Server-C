@@ -15,6 +15,8 @@ struct benchmark_args {
     int message_size;
     long *total_bytes_sent;
     long *total_messages_sent;
+    double *rtts;      /* shared array: per-message round-trip times (ms) */
+    long *rtt_index;   /* atomically incremented slot counter */
 };
 
 // Function for a single client thread to execute
@@ -71,6 +73,9 @@ void *client_thread_func(void *arg) {
 
     // Send messages and receive echoes
     for (int i = 0; i < params->num_messages; i++) {
+        struct timespec t0, t1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+
         if (send(sock, message_buffer, params->message_size, 0) < 0) {
             perror("Send failed");
             break;
@@ -85,7 +90,12 @@ void *client_thread_func(void *arg) {
             }
             bytes_received += result;
         }
-        
+
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        double rtt_ms = (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
+        long slot = __sync_fetch_and_add(params->rtt_index, 1);
+        params->rtts[slot] = rtt_ms;
+
         __sync_fetch_and_add(params->total_bytes_sent, params->message_size);
         __sync_fetch_and_add(params->total_messages_sent, 1);
     }
@@ -96,6 +106,11 @@ cleanup_buffers:
     free(message_buffer);
     free(receive_buffer);
     return NULL;
+}
+
+static int compare_doubles(const void *a, const void *b) {
+    double da = *(const double *)a, db = *(const double *)b;
+    return (da > db) - (da < db);
 }
 
 void print_usage(const char *prog_name) {
@@ -140,6 +155,12 @@ int main(int argc, char *argv[]) {
 
     long total_bytes_sent = 0;
     long total_messages_sent = 0;
+    long rtt_index = 0;
+    double *rtts = malloc(sizeof(double) * (size_t)num_clients * num_messages);
+    if (!rtts) {
+        perror("Failed to allocate RTT array");
+        exit(EXIT_FAILURE);
+    }
 
     struct benchmark_args args = {
         .host = host,
@@ -148,6 +169,8 @@ int main(int argc, char *argv[]) {
         .message_size = message_size,
         .total_bytes_sent = &total_bytes_sent,
         .total_messages_sent = &total_messages_sent,
+        .rtts = rtts,
+        .rtt_index = &rtt_index,
     };
 
     struct timespec start, end;
@@ -177,11 +200,19 @@ int main(int argc, char *argv[]) {
         printf("Total Data Sent:      %.2f MB\n", (double)total_bytes_sent / (1024 * 1024));
         printf("Throughput:           %.2f messages/sec\n", messages_per_second);
         printf("Data Rate:            %.2f MB/s\n", mbps);
+
+        if (rtt_index > 0) {
+            qsort(rtts, rtt_index, sizeof(double), compare_doubles);
+            printf("RTT p50:              %.3f ms\n", rtts[(long)(0.50 * (rtt_index - 1))]);
+            printf("RTT p95:              %.3f ms\n", rtts[(long)(0.95 * (rtt_index - 1))]);
+            printf("RTT p99:              %.3f ms\n", rtts[(long)(0.99 * (rtt_index - 1))]);
+        }
     } else {
         printf("Benchmark completed too quickly to measure.\n");
     }
     printf("-------------------------\n");
 
+    free(rtts);
     free(threads);
     return 0;
 }

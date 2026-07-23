@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <signal.h>
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
@@ -79,6 +80,11 @@ int main() {
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
     pthread_t thread_id;
+
+    // Ignore SIGPIPE: without this, a write() to a socket whose client
+    // disconnected mid-exchange terminates the entire server process.
+    // (Found via load testing: the server died under concurrent load.)
+    signal(SIGPIPE, SIG_IGN);
 
     // 1. Create socket
     server_socket = socket(AF_INET, SOCK_STREAM, 0);

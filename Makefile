@@ -59,3 +59,15 @@ run-benchmark: $(SERVER_TARGET) $(BENCHMARK_TARGET)
 clean:
 	@echo "Cleaning up build artifacts..."
 	rm -f $(SERVER_TARGET) $(BENCHMARK_TARGET)
+# ── Thread-pool server + TSAN targets (added 2026-07-22) ──
+POOL_TARGET = server_pool
+POOL_SRC = multiServ_pool.c
+
+$(POOL_TARGET): $(POOL_SRC)
+	$(CC) $(CFLAGS) -o $(POOL_TARGET) $(POOL_SRC)
+
+tsan: $(SERVER_SRC) $(POOL_SRC)  ## ThreadSanitizer builds (run under load, expect 0 warnings)
+	$(CC) -Wall -pthread -O1 -g -fsanitize=thread -o server_tsan $(SERVER_SRC)
+	$(CC) -Wall -pthread -O1 -g -fsanitize=thread -o pool_tsan $(POOL_SRC)
+
+all: $(SERVER_TARGET) $(BENCHMARK_TARGET) $(POOL_TARGET)
